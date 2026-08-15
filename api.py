@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import time
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -16,7 +17,10 @@ def send_message(chat_id, text):
 
 def send_document(chat_id, file_bytes, filename):
     url = f"{TELEGRAM_API}/sendDocument"
-    return requests.post(url, data={"chat_id": chat_id}, files={"document": (filename, file_bytes)})
+    try:
+        return requests.post(url, data={"chat_id": chat_id}, files={"document": (filename, file_bytes)}, timeout=30)
+    except:
+        return None
 
 # ================= FUNGSI KONVERSI =================
 def parse_accs(file_content):
@@ -46,7 +50,8 @@ def build_guest_dat(uid, password):
 # ================= WEBHOOK HANDLER =================
 @app.route('/', methods=['GET'])
 def home():
-    return "Bot is Online! 🚀", 200
+    # 🔥 PERBAIKAN 1: Teks saat bot diakses root
+    return "BOT SUDAH ONLINE", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -82,13 +87,29 @@ def webhook():
                 send_message(chat_id, "❌ Tidak ada akun valid di `accs.json`.")
                 return "OK", 200
             
-            send_message(chat_id, f"✅ Ditemukan {len(accounts)} akun. Mengirim file satu per satu...")
+            send_message(chat_id, f"✅ Ditemukan {len(accounts)} akun. Mengirim file sesuai urutan data...")
             
-            for acc in accounts:
+            # 🔥 PERBAIKAN 2: Kirim file berurutan sesuai urutan baris di accs.json
+            batch_size = 5
+            total_sent = 0
+            
+            for i, acc in enumerate(accounts):
                 data = build_guest_dat(acc["uid"], acc["password"])
                 json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
                 file_bytes = json_str.encode("utf-8")
-                send_document(chat_id, file_bytes, f"guest100067.dat")
+                
+                # Kirim file
+                try:
+                    send_document(chat_id, file_bytes, f"guest100067.dat")
+                    total_sent += 1
+                except:
+                    pass
+                
+                # Jeda setiap 5 file (tetap dipertahankan biar gak kena limit Telegram)
+                if (i + 1) % batch_size == 0 and (i + 1) < len(accounts):
+                    time.sleep(2)
+            
+            send_message(chat_id, f"✅ Selesai! Total {total_sent} file `guest100067.dat` berhasil dikirim sesuai urutan data.")
             
             return "OK", 200
         
