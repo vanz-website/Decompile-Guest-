@@ -33,10 +33,24 @@ def send_document(chat_id, file_bytes, filename="guest100067.dat", caption=""):
 
 # ================= FUNGSI KONVERSI =================
 def parse_accs(file_content):
-    """Mendukung format UID:PASSWORD (per baris) dan format JSON Array"""
+    """Mendukung format JSON Array maupun format teks UID:PASSWORD per baris"""
     accounts = []
     
-    # 1. Parse format teks UID:PASSWORD (per baris)
+    # 1. Coba parse JSON terlebih dahulu (apabila file berbentuk accs.json array)
+    try:
+        json_data = json.loads(file_content)
+        if isinstance(json_data, list):
+            for item in json_data:
+                uid = str(item.get("uid") or item.get("com.garena.msdk.guest_uid") or "").strip()
+                pwd = str(item.get("password") or item.get("com.garena.msdk.guest_password") or "").strip()
+                if uid and pwd:
+                    accounts.append({"uid": uid, "password": pwd})
+            if accounts:
+                return accounts
+    except Exception:
+        pass
+
+    # 2. Parse format teks UID:PASSWORD (per baris) jika bukan format JSON
     for line in file_content.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or ":" not in line:
@@ -46,19 +60,6 @@ def parse_accs(file_content):
         pwd = str(parts[1].strip())
         if uid and pwd:
             accounts.append({"uid": uid, "password": pwd})
-            
-    # 2. Jika bukan format teks, coba parse sebagai JSON
-    if not accounts:
-        try:
-            json_data = json.loads(file_content)
-            if isinstance(json_data, list):
-                for item in json_data:
-                    uid = str(item.get("uid") or "").strip()
-                    pwd = str(item.get("password") or "").strip()
-                    if uid and pwd:
-                        accounts.append({"uid": uid, "password": pwd})
-        except Exception:
-            pass
             
     return accounts
 
@@ -70,24 +71,20 @@ def build_guest_dat_bytes(uid: str, password: str) -> bytes:
             "com.garena.msdk.guest_uid": str(uid)
         }
     }
-    # Diproses rapat tanpa spasi tambahan agar struktur JSON identik
     return json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
 
 # ================= PROSES BACKGROUND =================
 def process_and_send_files(chat_id, accounts):
-    send_message(chat_id, f"✅ Ditemukan **{len(accounts)}** akun.\n⏳ Memproses dan mengirim file `guest100067.dat`...")
+    send_message(chat_id, f"✅ Ditemukan **{len(accounts)}** akun.\n⚡ Memproses & mengirim file `guest100067.dat`...")
     
     total_sent = 0
     total_accs = len(accounts)
     
     for i, acc in enumerate(accounts, 1):
-        # Generate isi file sesuai UID dan Password
         file_bytes = build_guest_dat_bytes(acc["uid"], acc["password"])
-        
-        # Caption penanda akun agar lu tau urutan filenya di Telegram
         caption = f"📄 Akun [{i}/{total_accs}]\n🆔 UID: `{acc['uid']}`"
         
-        # Nama file dikunci mati menjadi "guest100067.dat" untuk setiap dokumen
+        # Kirim file dengan nama guest100067.dat
         res = send_document(chat_id, file_bytes, filename="guest100067.dat", caption=caption)
         
         if res and res.get("ok"):
@@ -95,10 +92,10 @@ def process_and_send_files(chat_id, accounts):
         else:
             print(f"[WARNING] Gagal mengirim file ke-{i} (UID: {acc['uid']})")
         
-        # Delay 0.5 detik untuk menghindari Rate Limit (Error 429 Telegram)
-        time.sleep(0.5)
+        # Jeda dipangkas ke 0.1 detik (super cepat ~10 file/detik tanpa kena limit Telegram)
+        time.sleep(0.1)
     
-    send_message(chat_id, f"🎉 **SELESAI!**\nTotal **{total_sent}/{total_accs}** file `guest100067.dat` berhasil dikirim.")
+    send_message(chat_id, f"🎉 **SELESAI JAWA KONTOLLL!**\nTotal **{total_sent}/{total_accs}** file `guest100067.dat` berhasil dikirim.")
 
 # ================= WEBHOOK HANDLER =================
 @app.route('/', methods=['GET'])
@@ -119,6 +116,7 @@ def webhook():
         message = update['message']
         chat_id = message['chat']['id']
         
+        # 🔥 Otomatis eksekusi saat file dikirim (tanpa syarat /start)
         if 'document' in message:
             doc = message['document']
             file_id = doc['file_id']
@@ -139,7 +137,7 @@ def webhook():
                 send_message(chat_id, "❌ Tidak ada akun valid yang ditemukan dalam file!")
                 return "OK", 200
             
-            # Jalankan pengiriman file di background thread
+            # Langsung jalankan thread eksekusi instan
             threading.Thread(target=process_and_send_files, args=(chat_id, accounts)).start()
             
             return "OK", 200
@@ -149,7 +147,7 @@ def webhook():
             if text == '/start':
                 send_message(chat_id, "🔥 **Guest Converter Bot** 🔥\n\nKirim file daftar akun (`accs.json` / `.txt`), bot akan langsung memproses tiap akun jadi file `guest100067.dat` secara otomatis.")
             else:
-                send_message(chat_id, "📤 Silakan kirim file daftar akun Anda.")
+                send_message(chat_id, "📤 Silakan langsung kirim file `accs.json` Anda.")
         
         return "OK", 200
     
