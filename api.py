@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import time
+import threading
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -9,6 +10,9 @@ app = Flask(__name__)
 # ================= KONFIGURASI =================
 BOT_TOKEN = "8277021258:AAFqskqr4gbVTOluxRfnFD06nVozjlXxas8"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# Variabel untuk cek status first deploy (supaya gak spam kirim pesan setiap request)
+FIRST_RUN = True
 
 # ================= FUNGSI TELEGRAM =================
 def send_message(chat_id, text):
@@ -47,14 +51,42 @@ def build_guest_dat(uid, password):
         }
     }
 
+# ================= PROSES BACKGROUND (SUPAYA GAK MUNTAH ULANG) =================
+def process_and_send_files(chat_id, accounts):
+    send_message(chat_id, f"✅ Ditemukan {len(accounts)} akun. Memproses di background...")
+    
+    batch_size = 5
+    total_sent = 0
+    
+    for i, acc in enumerate(accounts):
+        data = build_guest_dat(acc["uid"], acc["password"])
+        json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+        file_bytes = json_str.encode("utf-8")
+        
+        try:
+            send_document(chat_id, file_bytes, f"guest100067.dat")
+            total_sent += 1
+        except:
+            pass
+        
+        if (i + 1) % batch_size == 0 and (i + 1) < len(accounts):
+            time.sleep(2)
+    
+    send_message(chat_id, f"✅ Selesai! Total {total_sent} file `guest100067.dat` berhasil dikirim.")
+
 # ================= WEBHOOK HANDLER =================
 @app.route('/', methods=['GET'])
 def home():
-    # 🔥 PERBAIKAN 1: Teks saat bot diakses root
     return "BOT SUDAH ONLINE", 200
+
+# 🔥 Tambahan endpoint untuk kirim pesan /start otomatis
+@app.route('/start', methods=['GET'])
+def start_bot():
+    return "Bot Telegram sudah online, silakan ketik /start di Telegram!", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global FIRST_RUN
     try:
         update = request.get_json()
         if not update or 'message' not in update:
@@ -62,6 +94,11 @@ def webhook():
         
         message = update['message']
         chat_id = message['chat']['id']
+        
+        # 🔥 Saat pertama kali bot menerima request, kirim sambutan
+        if FIRST_RUN:
+            send_message(chat_id, "🔥 **BOT SUDAH ONLINE** 🔥\n\nSilakan kirim file `accs.json` (format `UID:PASSWORD`) untuk mengubahnya jadi file `guest100067.dat`.\n\n*Tolong ketik /start untuk melihat petunjuk.*")
+            FIRST_RUN = False
         
         if 'document' in message:
             doc = message['document']
@@ -87,35 +124,14 @@ def webhook():
                 send_message(chat_id, "❌ Tidak ada akun valid di `accs.json`.")
                 return "OK", 200
             
-            send_message(chat_id, f"✅ Ditemukan {len(accounts)} akun. Mengirim file sesuai urutan data...")
-            
-            # 🔥 PERBAIKAN 2: Kirim file berurutan sesuai urutan baris di accs.json
-            batch_size = 5
-            total_sent = 0
-            
-            for i, acc in enumerate(accounts):
-                data = build_guest_dat(acc["uid"], acc["password"])
-                json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
-                file_bytes = json_str.encode("utf-8")
-                
-                # Kirim file
-                try:
-                    send_document(chat_id, file_bytes, f"guest100067.dat")
-                    total_sent += 1
-                except:
-                    pass
-                
-                # Jeda setiap 5 file (tetap dipertahankan biar gak kena limit Telegram)
-                if (i + 1) % batch_size == 0 and (i + 1) < len(accounts):
-                    time.sleep(2)
-            
-            send_message(chat_id, f"✅ Selesai! Total {total_sent} file `guest100067.dat` berhasil dikirim sesuai urutan data.")
+            # 🔥 Jalankan di background thread
+            threading.Thread(target=process_and_send_files, args=(chat_id, accounts)).start()
             
             return "OK", 200
         
         elif 'text' in message:
             if message['text'] == '/start':
-                send_message(chat_id, "🔥 **Guest Converter Bot** 🔥\n\nKirim file `accs.json` (format `UID:PASSWORD`) dan saya akan mengubahnya jadi file `guest100067.dat` satu per satu.")
+                send_message(chat_id, "🔥 **Guest Converter Bot** 🔥\n\nKirim file `accs.json` (format `UID:PASSWORD`) dan saya akan mengubahnya jadi file `guest100067.dat` satu per satu.\n\nBOT SUDAH ONLINE ✅\n\nSilakan kirim file Anda.")
             else:
                 send_message(chat_id, "📤 Silakan kirim file `accs.json`.")
         
